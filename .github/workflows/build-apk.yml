@@ -9,6 +9,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - uses: actions/checkout@v4
 
@@ -17,24 +21,28 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
       - name: Install Android SDK 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Unpack Android project
-        run: unzip -q X86Stock-Android-project.zip
+        run: |
+          rm -rf X86Stock-Android
+          unzip -q X86Stock-Android-project.zip
 
       - name: Build APK
         run: |
           cd X86Stock-Android
-          gradle :app:assembleDebug
+          gradle :app:assembleDebug --no-daemon
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: X86-Stock-APK
           path: X86Stock-Android/app/build/outputs/apk/debug/app-debug.apk
