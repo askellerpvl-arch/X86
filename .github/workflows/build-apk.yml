@@ -34,7 +34,7 @@ jobs:
       - name: Unpack Android project
         run: |
           rm -rf X86Stock-Android
-          unzip -q X86Stock-Android-project-v1.3.zip
+          unzip -q X86Stock-Android-project-v1.4.zip
 
       - name: Build APK
         run: |
