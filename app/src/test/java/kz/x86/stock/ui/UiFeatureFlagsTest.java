@@ -16,6 +16,9 @@ public class UiFeatureFlagsTest {
         assertFalse(flags.enabled(UiFeatureFlags.CONNECTION_BADGE));
         assertFalse(flags.enabled(UiFeatureFlags.SCANNER_TORCH));
         assertFalse(flags.enabled(UiFeatureFlags.PAGE_SEARCH));
+        assertFalse(flags.enabled(UiFeatureFlags.MODULE_SEARCH));
+        assertFalse(flags.enabled(UiFeatureFlags.CASHIER_LAYOUT));
+        assertFalse(flags.enabled(UiFeatureFlags.OPERATION_NOTICES));
         flags.set(UiFeatureFlags.CONNECTION_BADGE, true);
         assertTrue(new UiFeatureFlags(store).enabled(UiFeatureFlags.CONNECTION_BADGE));
     }

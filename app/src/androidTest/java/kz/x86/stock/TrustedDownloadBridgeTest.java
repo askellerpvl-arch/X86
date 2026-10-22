@@ -30,9 +30,12 @@ public class TrustedDownloadBridgeTest {
             view.setWebViewClient(new WebViewClient() {
                 @Override public void onPageFinished(WebView v, String url) { loaded.countDown(); }
             });
-            view.loadDataWithBaseURL(origin, html, "text/html", "UTF-8", null);
+            view.loadDataWithBaseURL(origin, html, "text/html", "UTF-8", origin);
         });
         assertTrue(loaded.await(15, TimeUnit.SECONDS));
+        AtomicReference<String> loadedUrl = new AtomicReference<>();
+        getInstrumentation().runOnMainSync(() -> loadedUrl.set(view.getUrl()));
+        assertEquals("fixture history URL must model a real loaded page", origin, loadedUrl.get());
     }
     private String evaluate(String script) throws Exception {
         CountDownLatch done = new CountDownLatch(1); AtomicReference<String> result = new AtomicReference<>();

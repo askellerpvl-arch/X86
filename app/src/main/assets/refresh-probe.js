@@ -1,4 +1,6 @@
 (function () {
+  if (window.__x86MobileV2 && typeof window.__x86MobileV2.safeRefresh === 'function')
+    return window.__x86MobileV2.safeRefresh();
   // No server contract is present in this repo. A positive opt-in state is
   // required; guessing from a tab name or HTTP status could lose a checkout.
   if (window.__x86NativeSafeRefreshV1 !== true) return 'unknown';

@@ -77,3 +77,26 @@ regression tests. Existing lint warnings are retained; lint errors are not suppr
 No server API is fabricated. Server-dependent tasks are blocked, while the independent
 Android work above is available for review. All physical-device/staging checklist
 items remain pending. No production test transactions were performed.
+
+## Supplied module 1.9.3 integration (2026-10-22)
+
+The user supplied `x86stock-update-1.9.3.ocmod.zip`, SHA-256
+`40a66a91e2f7d9c18c8312dd56e5131f16444392ceda2af63ccfc8fa00d4fe2e`.
+Reference PHP and frontend files are frozen by hashes under `tests/server/reference/`.
+No module deployment, production configuration or database mutation was performed.
+
+Implemented as default-OFF Android experiments: latest-response server search,
+list scroll restoration, real module/cart/request-aware refresh and Back protection,
+product action menus and horizontal gestures, cashier step controls, scan confirmation
+and optional haptic feedback, and native notices after confirmed sale/purchase IDs.
+Original financial handlers, custom cashier prices and request contracts are preserved.
+No automatic sale, write retry or printing is introduced by gestures/scanning.
+
+Offline regression executes unchanged PHP with synthetic OpenCart tables in an
+internal Docker network (20 scenarios), and original module JavaScript/DOM with
+fake API responses (22 scenarios). These cover logic, not live HTTP authentication,
+production schema, payment terminal behaviour, camera recognition or printer output.
+The Android version remains 1.5.0/code 5 pending mandatory manual release gates.
+Batch scanning, reliable update distribution and full v2 acceptance remain open.
+A staging URL, physical Android upgrade/auth/scan/POS/PDF/50x30 label acceptance and
+all-role business regression are still required. Do not describe this as ready v2.0.

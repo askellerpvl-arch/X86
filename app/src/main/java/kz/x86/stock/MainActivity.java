@@ -3,6 +3,11 @@ package kz.x86.stock;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.NotificationChannel;
+import android.app.PendingIntent;
+import kz.x86.stock.ui.StockEventBridge;
 import android.content.SharedPreferences;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceResponse;
@@ -70,6 +75,7 @@ public class MainActivity extends Activity {
     private static final int REQ_CAMERA = 1001;
     private static final int REQ_FILE = 1002;
     private static final int REQ_STORAGE = 1003;
+    private static final int REQ_NOTIFICATIONS = 1004;
     private static final long EXIT_CONFIRM_MS = 2000L;
 
 
@@ -235,6 +241,7 @@ public class MainActivity extends Activity {
         trustedBridgeActive = featureFlags.enabled(UiFeatureFlags.NEW_DOWNLOAD_BRIDGE)
                 && TrustedDownloadBridge.install(webView, (data, name, mime) -> new DownloadBridge().saveBase64(data, name, mime));
         if (!trustedBridgeActive) webView.addJavascriptInterface(new DownloadBridge(), "X86Android");
+        StockEventBridge.install(webView, this::notifyConfirmedOperation);
         if (featureFlags.enabled(UiFeatureFlags.NEW_DOWNLOAD_BRIDGE) && !trustedBridgeActive)
             Toast.makeText(this, "WebView не поддерживает защищённый PDF-мост. Используется совместимый режим", Toast.LENGTH_LONG).show();
 
@@ -317,6 +324,7 @@ public class MainActivity extends Activity {
                 installBottomScanButton();
                 if (trustedBridgeActive) webView.evaluateJavascript(assetScript("trusted-download-adapter.js"), null);
                 installDownloadHook();
+                installModuleEnhancements();
             }
 
             @Override
@@ -622,20 +630,78 @@ public class MainActivity extends Activity {
         String[] labels = {"Классический интерфейс", "Защищённое обновление (тест)",
                 "Индикатор соединения (тест)", "Осторожное закрытие диалогов (тест)",
                 "Фонарик сканера (тест)", "Поиск по открытой странице (тест)",
-                "Защищённый PDF-мост (после перезапуска)"};
+                "Защищённый PDF-мост (после перезапуска)", "Навигация модуля 1.9.3 (тест)",
+                "Серверный live-поиск (тест)", "Меню товара по удержанию (тест)",
+                "Жесты: только меню товара (тест)", "Пошаговый кассирский вид (тест)",
+                "Уведомления подтверждённых операций (тест)", "Подтверждение кода сканера (тест)", "Отклик сканера (тест)"};
         String[] keys = {UiFeatureFlags.CLASSIC_MODE, UiFeatureFlags.SAFE_REFRESH,
                 UiFeatureFlags.CONNECTION_BADGE, UiFeatureFlags.ENHANCED_BACK,
-                UiFeatureFlags.SCANNER_TORCH, UiFeatureFlags.PAGE_SEARCH, UiFeatureFlags.NEW_DOWNLOAD_BRIDGE};
+                UiFeatureFlags.SCANNER_TORCH, UiFeatureFlags.PAGE_SEARCH, UiFeatureFlags.NEW_DOWNLOAD_BRIDGE,
+                UiFeatureFlags.MODULE_NAVIGATION, UiFeatureFlags.MODULE_SEARCH, UiFeatureFlags.ITEM_ACTIONS,
+                UiFeatureFlags.MOBILE_GESTURES, UiFeatureFlags.CASHIER_LAYOUT, UiFeatureFlags.OPERATION_NOTICES, UiFeatureFlags.SCAN_CONFIRM, UiFeatureFlags.SCANNER_FEEDBACK};
         boolean[] checked = new boolean[keys.length];
         for (int i = 0; i < keys.length; i++) checked[i] = featureFlags.requested(keys[i]);
         new AlertDialog.Builder(this).setTitle(trustedBridgeActive ? "Настройки · защищённый PDF-мост" : "Настройки · совместимый PDF-мост")
                 .setMultiChoiceItems(labels, checked, (dialog, which, value) -> {
                     featureFlags.set(keys[which], value);
+                    if (value && UiFeatureFlags.OPERATION_NOTICES.equals(keys[which]) && Build.VERSION.SDK_INT >= 33
+                            && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+                    installModuleEnhancements();
                     if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
                     showConnection(mainFrameFailed ? ConnectivityUiState.OFFLINE : ConnectivityUiState.ONLINE);
                 }).setNeutralButton("Найти на странице", (d, w) -> showPageSearch())
                 .setNegativeButton("Фонарик", (d, w) -> toggleScannerTorch())
                 .setPositiveButton("Закрыть", null).show();
+    }
+
+    private void installModuleEnhancements() {
+        if (webView == null || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) return;
+        try {
+            JSONObject options = new JSONObject();
+            options.put("safeRefresh", featureFlags.enabled(UiFeatureFlags.SAFE_REFRESH));
+            options.put("navigation", featureFlags.enabled(UiFeatureFlags.MODULE_NAVIGATION) || featureFlags.enabled(UiFeatureFlags.ENHANCED_BACK));
+            options.put("liveSearch", featureFlags.enabled(UiFeatureFlags.MODULE_SEARCH));
+            options.put("itemActions", featureFlags.enabled(UiFeatureFlags.ITEM_ACTIONS));
+            options.put("gestures", featureFlags.enabled(UiFeatureFlags.MOBILE_GESTURES));
+            options.put("cashier", featureFlags.enabled(UiFeatureFlags.CASHIER_LAYOUT));
+            options.put("scanConfirm", featureFlags.enabled(UiFeatureFlags.SCAN_CONFIRM));
+            options.put("scannerFeedback", featureFlags.enabled(UiFeatureFlags.SCANNER_FEEDBACK));
+            options.put("notifications", featureFlags.enabled(UiFeatureFlags.OPERATION_NOTICES));
+            boolean any = false;
+            java.util.Iterator<String> keys = options.keys();
+            while (keys.hasNext()) any |= options.getBoolean(keys.next());
+            String setup = "(function(){if(!" + any + "&&!window.__x86MobileV2)return false;"
+                    + "window.__x86MobileOptions=" + options + ";var style=document.getElementById('x86-mobile-style');"
+                    + "if(!style){style=document.createElement('style');style.id='x86-mobile-style';document.head.appendChild(style);}"
+                    + "style.textContent=" + JSONObject.quote(assetScript("stock-mobile-v2.css")) + ";return true;})()";
+            long generation = pageGeneration;
+            WebView target = webView;
+            target.evaluateJavascript(setup, result -> {
+                if (webView == target && generation == pageGeneration && StockOriginPolicy.isTrustedStockPage(target.getUrl()) && "true".equals(result)) webView.evaluateJavascript(assetScript("stock-mobile-v2.js"), null);
+            });
+        } catch (Exception ignored) { /* Unknown contracts keep the original site. */ }
+    }
+
+    private void notifyConfirmedOperation(String action, long reference) {
+        if ("scan".equals(action)) {
+            if (featureFlags.enabled(UiFeatureFlags.SCANNER_FEEDBACK) && webView != null)
+                webView.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
+            return;
+        }
+        if (!featureFlags.enabled(UiFeatureFlags.OPERATION_NOTICES) || isFinishing() || isDestroyed()) return;
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        NotificationManager manager = (NotificationManager)getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        manager.createNotificationChannel(new NotificationChannel("x86-confirmed", "Подтверждённые операции X86", NotificationManager.IMPORTANCE_DEFAULT));
+        PendingIntent open = PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP),PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification notice = new Notification.Builder(this,"x86-confirmed")
+                .setSmallIcon(android.R.drawable.stat_notify_more)
+                .setContentTitle("sale".equals(action) ? "Продажа подтверждена сервером" : "Приёмка подтверждена сервером")
+                .setContentText("№ " + reference).setAutoCancel(true).setContentIntent(open).build();
+        try { manager.notify((action + reference).hashCode(),notice); }
+        catch (SecurityException denied) { /* Permission/channel choice never fails the original operation. */ }
     }
 
     private void toggleScannerTorch() {
@@ -712,6 +778,7 @@ public class MainActivity extends Activity {
             webView.evaluateJavascript(assetScript("enhanced-back.js"), result -> {
                 if (webView == null) return;
                 if ("\"closed\"".equals(result)) lastBackAt = 0L;
+                else if ("\"home\"".equals(result)) confirmExit();
                 else if ("\"blocked\"".equals(result))
                     Toast.makeText(this, "Закройте форму кнопкой на странице, чтобы сохранить изменения", Toast.LENGTH_SHORT).show();
                 else handleLegacyBack();

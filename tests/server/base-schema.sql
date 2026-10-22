@@ -1,0 +1,9 @@
+CREATE TABLE test_product (product_id INT PRIMARY KEY, model VARCHAR(100), sku VARCHAR(100), quantity INT, price DECIMAL(15,4), status INT, stock_status_id INT, date_modified DATETIME NULL) ENGINE=InnoDB;
+CREATE TABLE test_product_description (product_id INT, language_id INT, name VARCHAR(255), tag TEXT, description TEXT) ENGINE=InnoDB;
+CREATE TABLE test_stock_status (stock_status_id INT, language_id INT, name VARCHAR(100)) ENGINE=InnoDB;
+CREATE TABLE test_setting (store_id INT, `key` VARCHAR(100), value TEXT) ENGINE=InnoDB;
+CREATE TABLE test_language (language_id INT, code VARCHAR(20), status INT, sort_order INT) ENGINE=InnoDB;
+CREATE TABLE test_product_special (product_id INT, customer_group_id INT, price DECIMAL(15,4), date_start DATE NULL, date_end DATE NULL, priority INT) ENGINE=InnoDB;
+CREATE TABLE test_product_attribute (product_id INT, text TEXT) ENGINE=InnoDB;
+CREATE TABLE test_product_to_category (product_id INT, category_id INT) ENGINE=InnoDB;
+CREATE TABLE test_category_description (category_id INT, language_id INT, name VARCHAR(100)) ENGINE=InnoDB;

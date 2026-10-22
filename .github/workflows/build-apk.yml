@@ -35,6 +35,15 @@ jobs:
         run: |
           bash scripts/tests/verify-apk-identity.sh
           node scripts/tests/legacy-navigation.js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/web/package-lock.json
+      - name: Supplied module frontend regression
+        run: |
+          npm ci --prefix tests/web
+          npm test --prefix tests/web
       - name: Unit tests, lint and debug APK
         run: gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
       - name: Upload development APK and test evidence
@@ -47,6 +56,13 @@ jobs:
             app/build/reports/
             app/build/test-results/
           if-no-files-found: error
+
+  server-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unchanged PHP with isolated synthetic MariaDB
+        run: bash tests/server/run.sh
 
   webview-tests:
     needs: verify
@@ -86,7 +102,7 @@ jobs:
             app/build/outputs/androidTest-results/
 
   build:
-    needs: [verify, webview-tests]
+    needs: [verify, webview-tests, server-regression]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.sign_release)
     runs-on: ubuntu-latest
 
