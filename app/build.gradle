@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+def releaseKeystorePath = System.getenv("X86_KEYSTORE_PATH")
+def releaseKeystorePassword = System.getenv("X86_KEYSTORE_PASSWORD")
+
+android {
+    namespace 'kz.x86.stock'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'kz.x86.stock'
+        minSdk 26
+        targetSdk 35
+        versionCode 5
+        versionName '1.5.0'
+    }
+
+    signingConfigs {
+        release {
+            if (releaseKeystorePath && releaseKeystorePassword) {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseKeystorePassword
+                keyAlias 'x86-release'
+                keyPassword releaseKeystorePassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            if (releaseKeystorePath && releaseKeystorePassword) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}
+
+
+dependencies {
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+}

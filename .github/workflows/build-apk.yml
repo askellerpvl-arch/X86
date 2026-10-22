@@ -34,39 +34,37 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Unpack Android project
-        run: |
-          rm -rf X86Stock-Android
-          unzip -q X86Stock-Android-project-v1.5.zip
-
       - name: Restore release signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.X86_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.X86_KEYSTORE_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::Secret X86_KEYSTORE_BASE64 is not configured"
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Release signing secrets are not configured"
             exit 1
           fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/x86-release.jks"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/x86-release.jks"
 
       - name: Build signed Release APK
         env:
-          X86_KEYSTORE_PATH: ${{ github.workspace }}/x86-release.jks
+          X86_KEYSTORE_PATH: ${{ runner.temp }}/x86-release.jks
           X86_KEYSTORE_PASSWORD: ${{ secrets.X86_KEYSTORE_PASSWORD }}
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Verify APK signature
         run: |
-          if [ -z "$X86_KEYSTORE_PASSWORD" ]; then
-            echo "::error::Secret X86_KEYSTORE_PASSWORD is not configured"
-            exit 1
-          fi
-          cd X86Stock-Android
-          gradle :app:assembleRelease --no-daemon
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
 
       - name: Remove signing key
         if: always()
-        run: rm -f "$GITHUB_WORKSPACE/x86-release.jks"
+        run: rm -f "$RUNNER_TEMP/x86-release.jks"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: X86-Stock-Release-APK
-          path: X86Stock-Android/app/build/outputs/apk/release/app-release.apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
