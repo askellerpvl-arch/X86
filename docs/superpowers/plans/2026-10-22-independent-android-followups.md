@@ -23,3 +23,9 @@ These are optional development capabilities, not completed v1.7–v2.0 releases.
 Verification after each step: JVM tests + lint + debug + instrumentation compile;
 API 26/35 WebView fixtures in CI; final signed test candidate via explicit workflow.
 Physical transactions, 50×30 printer behavior and original APK upgrade remain open.
+
+5. Continue original Task 4: opt-in origin-bound WebMessage PDF transport with
+   versioned envelopes, main-frame rejection and an adapter for the existing
+   saveBase64 API. Validate actual top-frame blob PDF, foreign origin, iframe and
+   malformed message on API26/35 before any default change. Keep compatibility
+   fallback visible and OFF by default until real site/device smoke passes.

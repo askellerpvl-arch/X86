@@ -47,17 +47,22 @@ regression tests. Existing lint warnings are retained; lint errors are not suppr
 - Refresh cannot currently establish a safe server-owned home/cart/dirty state.
   It therefore refuses unknown state, including in classic mode. Full pull-to-refresh
   needs the actual page contract and device tests; do not re-enable unconditional reload.
-- The legacy `X86Android.saveBase64` bridge is retained for PDF compatibility. Its
-  top-level URL check does **not** authenticate callers in iframes. Origin-checked
-  WebMessage migration is unfinished; the new bridge flag is reserved and not exposed.
+- An optional origin-checked WebMessage download channel is now implemented.
+  Its native object is restricted to https://x86.kz, rejects non-main-frame calls,
+  validates versioned envelopes and acknowledges receipt only. An adapter preserves
+  the existing saveBase64/blob PDF flow. It is OFF by default and selected changes
+  apply after app restart. Unsupported WebView engines visibly use compatibility mode.
+  The legacy compatibility bridge still cannot authenticate iframe callers; actual
+  site/PDF smoke tests remain a release gate before making the new channel default.
 - Exact `/stock` URL restrictions need real login/download redirect smoke tests.
   If a necessary server route lies outside `/stock`, document it before any policy change.
 - Connection status does not assert a sale succeeded. No XHR body interception,
   financial arithmetic, automatic POST retry or invented transaction status exists.
 - Pending downloads are activity-scoped; process-death restoration of downloads,
   an authenticated recent-files list and printer-specific behavior remain pending.
-- The original supplied APK hash is recorded but that APK/device certificate is
-  unavailable here. CI artifact equivalence is not a replacement for that check.
+- The original APK is now supplied: SHA-256 matches the plan and its verified
+  certificate matches the signed development candidate. The installed device
+  certificate and higher-version upgrade still require physical-device verification.
 
 ## Remaining dependencies through v2.0
 

@@ -9,7 +9,11 @@ Signer SHA-256 (verified against previous GitHub APK in this session):
 
 The plan reports user-supplied original APK SHA-256
 `5b6b4bda4d9acba2e7320febaff8e16ccfc4ecc8877453ad87ac6994909fbe14`.
-That original APK is NOT available here. Do not claim it equals the CI artifact.
+The original APK was supplied and checked on 2026-10-22: its SHA-256 matches
+that reported value, its package is kz.x86.stock / code 5 / 1.5.0, and its
+apksigner-verified certificate matches the CI baseline. The APK files themselves
+have different hashes; their signing identity matches. Actual device upgrade and
+higher-version release tests are still pending.
 See `baseline-identity.txt` for hashes of locally available GitHub artifacts.
 
 ## Manual gate — ALL pending (not run)

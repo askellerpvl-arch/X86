@@ -1,6 +1,7 @@
 # Release gate
 
-- [ ] Original user/device v1.5 APK identity verified independently of CI baseline.
+- [x] Original supplied v1.5 APK signature/package/hash verified independently of CI baseline.
+- [ ] Installed-device certificate and higher-version upgrade verified.
 - [ ] Unit tests, shell acceptance tests, lint, debug APK pass on exact candidate SHA.
 - [ ] Signed release built only by trusted/manual workflow; same existing certificate.
 - [ ] `scripts/verify-apk-identity.sh ORIGINAL.apk CANDIDATE.apk` passes.

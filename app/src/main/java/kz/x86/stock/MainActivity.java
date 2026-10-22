@@ -12,6 +12,12 @@ import android.widget.Button;
 import android.widget.EditText;
 import kz.x86.stock.download.PendingDownloads;
 import kz.x86.stock.download.LegacyDownloadFiles;
+import kz.x86.stock.download.TrustedDownloadBridge;
+import kz.x86.stock.download.DownloadAdmission;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import kz.x86.stock.security.StockOriginPolicy;
@@ -154,6 +160,10 @@ public class MainActivity extends Activity {
             "try{home.click();return 'navigated';}catch(x){return 'unknown';}" +
             "})()";
 
+    private final ThreadPoolExecutor downloadExecutor = new ThreadPoolExecutor(1, 1, 0L,
+            TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(2));
+    private final DownloadAdmission downloadAdmission = new DownloadAdmission(3);
+    private boolean trustedBridgeActive;
     private UiFeatureFlags featureFlags;
     private TextView connectionBadge;
     private boolean mainFrameFailed;
@@ -222,7 +232,11 @@ public class MainActivity extends Activity {
         root.addView(connectionBadge, new LinearLayout.LayoutParams(-1, -2));
         root.addView(swipeRefreshLayout, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
-        webView.addJavascriptInterface(new DownloadBridge(), "X86Android");
+        trustedBridgeActive = featureFlags.enabled(UiFeatureFlags.NEW_DOWNLOAD_BRIDGE)
+                && TrustedDownloadBridge.install(webView, (data, name, mime) -> new DownloadBridge().saveBase64(data, name, mime));
+        if (!trustedBridgeActive) webView.addJavascriptInterface(new DownloadBridge(), "X86Android");
+        if (featureFlags.enabled(UiFeatureFlags.NEW_DOWNLOAD_BRIDGE) && !trustedBridgeActive)
+            Toast.makeText(this, "WebView не поддерживает защищённый PDF-мост. Используется совместимый режим", Toast.LENGTH_LONG).show();
 
         IntentFilter downloadFilter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
         ContextCompat.registerReceiver(this, downloadReceiver, downloadFilter, ContextCompat.RECEIVER_EXPORTED);
@@ -301,6 +315,7 @@ public class MainActivity extends Activity {
                 lastBackAt = 0L;
                 if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
                 installBottomScanButton();
+                if (trustedBridgeActive) webView.evaluateJavascript(assetScript("trusted-download-adapter.js"), null);
                 installDownloadHook();
             }
 
@@ -492,18 +507,30 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "Формат или размер файла не поддерживается", Toast.LENGTH_LONG).show());
                 return;
             }
+            DownloadAdmission.Permit permit = downloadAdmission.acquire();
+            if (permit == null) {
+                runOnUiThread(() -> { if (webView != null) Toast.makeText(MainActivity.this, "Дождитесь завершения текущих загрузок", Toast.LENGTH_LONG).show(); });
+                return;
+            }
             try {
-                int comma = dataUrl.indexOf(',');
-                String payload = comma >= 0 ? dataUrl.substring(comma + 1) : dataUrl;
-                byte[] bytes = Base64.decode(payload, Base64.DEFAULT);
-                runOnUiThread(() -> {
-                    // Legacy bridge cannot authenticate the calling iframe. Top-level check
-                    // is defense in depth only; see docs/qa/implementation-status.md.
-                    if (webView != null && StockOriginPolicy.isTrustedStockPage(webView.getUrl()))
-                        saveDecodedFile(bytes, fileName, DownloadPayloadPolicy.mimeFromDataUrl(dataUrl));
+                downloadExecutor.execute(() -> {
+                    try {
+                        int comma = dataUrl.indexOf(',');
+                        byte[] bytes = Base64.decode(dataUrl.substring(comma + 1), Base64.DEFAULT);
+                        runOnUiThread(() -> {
+                            try {
+                                if (webView != null && StockOriginPolicy.isTrustedStockPage(webView.getUrl()))
+                                    saveDecodedFile(bytes, fileName, DownloadPayloadPolicy.mimeFromDataUrl(dataUrl));
+                            } finally { permit.close(); }
+                        });
+                    } catch (Exception invalid) {
+                        permit.close();
+                        runOnUiThread(() -> { if (webView != null) Toast.makeText(MainActivity.this, "Ошибка сохранения файла", Toast.LENGTH_LONG).show(); });
+                    }
                 });
-            } catch (Exception e) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка сохранения файла", Toast.LENGTH_LONG).show());
+            } catch (RejectedExecutionException full) {
+                permit.close();
+                runOnUiThread(() -> { if (webView != null) Toast.makeText(MainActivity.this, "Дождитесь завершения текущих загрузок", Toast.LENGTH_LONG).show(); });
             }
         }
     }
@@ -594,13 +621,14 @@ public class MainActivity extends Activity {
     private void showUiSettings() {
         String[] labels = {"Классический интерфейс", "Защищённое обновление (тест)",
                 "Индикатор соединения (тест)", "Осторожное закрытие диалогов (тест)",
-                "Фонарик сканера (тест)", "Поиск по открытой странице (тест)"};
+                "Фонарик сканера (тест)", "Поиск по открытой странице (тест)",
+                "Защищённый PDF-мост (после перезапуска)"};
         String[] keys = {UiFeatureFlags.CLASSIC_MODE, UiFeatureFlags.SAFE_REFRESH,
                 UiFeatureFlags.CONNECTION_BADGE, UiFeatureFlags.ENHANCED_BACK,
-                UiFeatureFlags.SCANNER_TORCH, UiFeatureFlags.PAGE_SEARCH};
+                UiFeatureFlags.SCANNER_TORCH, UiFeatureFlags.PAGE_SEARCH, UiFeatureFlags.NEW_DOWNLOAD_BRIDGE};
         boolean[] checked = new boolean[keys.length];
         for (int i = 0; i < keys.length; i++) checked[i] = featureFlags.requested(keys[i]);
-        new AlertDialog.Builder(this).setTitle("Настройки интерфейса · экспериментальные")
+        new AlertDialog.Builder(this).setTitle(trustedBridgeActive ? "Настройки · защищённый PDF-мост" : "Настройки · совместимый PDF-мост")
                 .setMultiChoiceItems(labels, checked, (dialog, which, value) -> {
                     featureFlags.set(keys[which], value);
                     if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
@@ -805,6 +833,8 @@ public class MainActivity extends Activity {
         cancelPendingCamera();
         if (fileCallback != null) { fileCallback.onReceiveValue(null); fileCallback = null; }
         pendingDownloads.clear();
+        downloadAdmission.close();
+        downloadExecutor.shutdownNow();
         try {
             unregisterReceiver(downloadReceiver);
         } catch (Exception ignored) {
@@ -812,6 +842,7 @@ public class MainActivity extends Activity {
         if (webView != null) {
             webView.removeJavascriptInterface("X86Android");
             webView.destroy();
+            webView = null;
         }
         swipeRefreshLayout = null;
         super.onDestroy();
