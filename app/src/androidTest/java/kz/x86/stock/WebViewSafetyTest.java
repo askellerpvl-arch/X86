@@ -1,6 +1,12 @@
 package kz.x86.stock;
 
-import android.test.ActivityInstrumentationTestCase2;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.ext.junit.rules.ActivityScenarioRule;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import static org.junit.Assert.*;
+import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentation;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import java.io.InputStream;
@@ -11,12 +17,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** No production URL is loaded, no backend or financial operation is invoked. */
-@SuppressWarnings("deprecation")
-public class WebViewSafetyTest extends ActivityInstrumentationTestCase2<WebViewFixtureActivity> {
-    public WebViewSafetyTest() { super(WebViewFixtureActivity.class); }
+@RunWith(AndroidJUnit4.class)
+public class WebViewSafetyTest {
+    @Rule public ActivityScenarioRule<WebViewFixtureActivity> activity = new ActivityScenarioRule<>(WebViewFixtureActivity.class);
     private WebView view;
     private void load(String html) throws Exception {
-        view = getActivity().webView;
+        activity.getScenario().onActivity(host -> view = host.webView);
         CountDownLatch ready = new CountDownLatch(1);
         getInstrumentation().runOnMainSync(() -> {
             view.setWebViewClient(new WebViewClient() {
@@ -43,26 +49,47 @@ public class WebViewSafetyTest extends ActivityInstrumentationTestCase2<WebViewF
             return new String(out.toByteArray(), StandardCharsets.UTF_8);
         }
     }
-    public void testUnknownMarkupNeverAuthorizesRefresh() throws Exception {
+    @Test public void testUnknownMarkupNeverAuthorizesRefresh() throws Exception {
         load("<input id='query' value='server value'>");
         assertEquals("\"unknown\"", evaluate(asset("refresh-probe.js")));
         evaluate("document.getElementById('query').value='unsaved'; window.__x86NativeSafeRefreshV1=true;");
         assertEquals("\"busy\"", evaluate(asset("refresh-probe.js")));
         assertEquals("\"unsaved\"", evaluate("document.getElementById('query').value"));
     }
-    public void testOpenCheckoutCannotBeClosedByEnhancedBack() throws Exception {
+    @Test public void testOpenCheckoutCannotBeClosedByEnhancedBack() throws Exception {
         load("<div role='dialog'><input value='checkout'><button data-close onclick='window.closed=true'>Close</button></div>");
         assertEquals("\"blocked\"", evaluate(asset("enhanced-back.js")));
         assertEquals("false", evaluate("window.closed===true"));
     }
-    public void testOnlyExplicitDialogCloseIsClicked() throws Exception {
+    @Test public void testOnlyExplicitDialogCloseIsClicked() throws Exception {
         load("<div role='dialog'><button data-close onclick='window.didClose=true'>Close</button></div>");
         assertEquals("\"closed\"", evaluate(asset("enhanced-back.js")));
         assertEquals("true", evaluate("window.didClose===true"));
     }
-    public void testUnknownXButtonIsNotClicked() throws Exception {
+    @Test public void testUnknownXButtonIsNotClicked() throws Exception {
         load("<button onclick='window.didClose=true'>X</button>");
         assertEquals("\"unknown\"", evaluate(asset("enhanced-back.js")));
         assertEquals("false", evaluate("window.didClose===true"));
+    }
+
+    @Test public void testTorchDoesNotStartAnotherCamera() throws Exception {
+        load("<p>No scanner</p>");
+        evaluate(asset("scanner-torch.js"));
+        assertEquals("\"unavailable\"", evaluate("window.__x86TorchV1.status"));
+    }
+
+    @Test public void testTorchWaitsForCameraTrackConfirmation() throws Exception {
+        load("<video style='width:200px;height:100px'></video>");
+        evaluate("window.testTorch=false; var track={readyState:'live',getCapabilities:function(){return {torch:true}},getSettings:function(){return {torch:false}},applyConstraints:function(c){window.testTorch=c.advanced[0].torch; return Promise.resolve()}};Object.defineProperty(document.querySelector('video'),'srcObject',{value:{getVideoTracks:function(){return [track]}}});");
+        evaluate(asset("scanner-torch.js"));
+        assertEquals("\"on\"", evaluate("window.__x86TorchV1.status"));
+        assertEquals("true", evaluate("window.testTorch"));
+    }
+
+    @Test public void testRejectedTorchRequestNeverReportsSuccess() throws Exception {
+        load("<video style='width:200px;height:100px'></video>");
+        evaluate("var track={readyState:'live',getCapabilities:function(){return {torch:true}},getSettings:function(){return {torch:false}},applyConstraints:function(){return Promise.reject(new Error('denied'))}};Object.defineProperty(document.querySelector('video'),'srcObject',{value:{getVideoTracks:function(){return [track]}}});");
+        evaluate(asset("scanner-torch.js"));
+        assertEquals("\"failed\"", evaluate("window.__x86TorchV1.status"));
     }
 }
