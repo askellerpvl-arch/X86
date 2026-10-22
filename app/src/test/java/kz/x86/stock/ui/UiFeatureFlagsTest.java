@@ -14,6 +14,8 @@ public class UiFeatureFlagsTest {
         MemoryStore store = new MemoryStore();
         UiFeatureFlags flags = new UiFeatureFlags(store);
         assertFalse(flags.enabled(UiFeatureFlags.CONNECTION_BADGE));
+        assertFalse(flags.enabled(UiFeatureFlags.SCANNER_TORCH));
+        assertFalse(flags.enabled(UiFeatureFlags.PAGE_SEARCH));
         flags.set(UiFeatureFlags.CONNECTION_BADGE, true);
         assertTrue(new UiFeatureFlags(store).enabled(UiFeatureFlags.CONNECTION_BADGE));
     }

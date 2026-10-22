@@ -11,8 +11,10 @@ public final class UiFeatureFlags {
     public static final String CONNECTION_BADGE = "x86.connection_badge";
     public static final String ENHANCED_BACK = "x86.enhanced_back";
     public static final String NEW_DOWNLOAD_BRIDGE = "x86.new_download_bridge";
+    public static final String SCANNER_TORCH = "x86.scanner_torch";
+    public static final String PAGE_SEARCH = "x86.page_search";
     private static final Set<String> KEYS = new HashSet<>(Arrays.asList(CLASSIC_MODE, SAFE_REFRESH,
-            CONNECTION_BADGE, ENHANCED_BACK, NEW_DOWNLOAD_BRIDGE));
+            CONNECTION_BADGE, ENHANCED_BACK, NEW_DOWNLOAD_BRIDGE, SCANNER_TORCH, PAGE_SEARCH));
     private final Store store;
     public UiFeatureFlags(Store store) { this.store = store; }
     public static boolean effective(boolean classicMode, boolean requestedFlag) { return !classicMode && requestedFlag; }

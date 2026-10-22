@@ -92,4 +92,19 @@ public class WebViewSafetyTest {
         evaluate(asset("scanner-torch.js"));
         assertEquals("\"failed\"", evaluate("window.__x86TorchV1.status"));
     }
+
+    @Test public void testFindOnPagePreservesEnteredText() throws Exception {
+        load("<p>Widget P/N 111</p><input id='quantity' value='7'>");
+        CountDownLatch found = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger matches = new java.util.concurrent.atomic.AtomicInteger();
+        getInstrumentation().runOnMainSync(() -> {
+            view.setFindListener((active, total, done) -> {
+                if (done) { matches.set(total); found.countDown(); }
+            });
+            view.findAllAsync("Widget");
+        });
+        assertTrue(found.await(10, TimeUnit.SECONDS));
+        assertEquals(1, matches.get());
+        assertEquals("\"7\"", evaluate("document.getElementById('quantity').value"));
+    }
 }

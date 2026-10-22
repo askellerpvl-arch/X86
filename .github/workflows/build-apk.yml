@@ -8,9 +8,13 @@ on:
         type: boolean
         default: false
   push:
-    branches: [ main, "development/**" ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -28,7 +32,9 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Verify APK identity checker
-        run: bash scripts/tests/verify-apk-identity.sh
+        run: |
+          bash scripts/tests/verify-apk-identity.sh
+          node scripts/tests/legacy-navigation.js
       - name: Unit tests, lint and debug APK
         run: gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
       - name: Upload development APK and test evidence
@@ -80,7 +86,7 @@ jobs:
             app/build/outputs/androidTest-results/
 
   build:
-    needs: verify
+    needs: [verify, webview-tests]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.sign_release)
     runs-on: ubuntu-latest
 
