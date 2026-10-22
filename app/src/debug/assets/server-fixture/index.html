@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>X86 Склад</title>
+
+
+
+
+</head>
+<body>
+<div id="toast"></div>
+
+<section id="login-screen" class="center-screen hidden">
+  <div class="login-card">
+    <div class="brand">X86</div>
+    <h1>Склад</h1>
+    <p>Быстрый доступ к товарам, продажам и аналитике.</p>
+    <input id="login" placeholder="Логин" autocomplete="username">
+    <input id="password" type="password" placeholder="Пароль" autocomplete="current-password">
+    <button class="primary big" id="login-btn">Войти</button>
+    <div id="login-error" class="error"></div>
+  </div>
+</section>
+
+<div id="app" class="hidden">
+<header>
+  <div><div class="eyebrow">X86.KZ</div><h1 id="page-title">Склад</h1></div>
+  <div class="header-actions"><span id="role-badge" class="role-badge">Админ</span><button id="logout-btn" class="logout-round" type="button" aria-label="Выйти" title="Выйти">↪</button><button id="scan-head" class="scan-round" aria-label="Сканировать">▣</button></div>
+</header>
+
+<main>
+<section class="page active" data-page="home">
+  <div class="quick-grid">
+    <button data-go="sale"><b>₸</b><span>Продажа</span></button>
+    <button data-go="receive"><b>＋</b><span>Приход</span></button>
+    <button data-go="products"><b>▤</b><span>Товары</span></button>
+    <button data-go="labels"><b>▦</b><span>Этикетки</span></button>
+    <button data-go="analytics"><b>⌁</b><span>Аналитика</span></button>
+    <button data-go="ai"><b>AI</b><span>GPT</span></button>
+    <button data-go="pos"><b>POS</b><span>Smart POS</span></button>
+    <button data-go="procurement"><b>↓</b><span>Закупка</span></button>
+  </div>
+  <div class="cards" id="dash-cards"></div>
+  <div class="panel"><div class="panel-title split-title"><span>Заказать в первую очередь</span><button class="panel-link" data-go="procurement" type="button">Все →</button></div><div id="home-recs"></div></div>
+  <div class="panel chart-panel"><div class="panel-title">Продажи за 30 дней</div><div class="chart-wrap"><canvas id="sales-chart" height="120"></canvas></div></div>
+</section>
+
+<section class="page" data-page="sale">
+  <div class="panel">
+    <div class="panel-title">Новая продажа</div>
+    <div class="seg"><button data-customer="retail" class="active">Розница</button><button data-customer="partner">Партнёр</button></div>
+    <div class="row row-scan"><input id="sale-code" placeholder="Сканируйте или введите код"><button id="sale-scan">Скан</button><button id="sale-add">+</button></div>
+    <div id="cart"></div>
+    <select id="payment"></select>
+    <input id="sale-note" placeholder="Комментарий (необязательно)">
+    <div class="totals" id="sale-totals"></div>
+    <div class="pos-checkout-status" id="pos-checkout-status"><span class="pos-dot"></span><span>Smart POS: проверяю…</span></div>
+    <button class="pos-pay big" id="pos-checkout" type="button">Оплатить через Smart POS</button>
+    <button class="primary big secondary-checkout" id="checkout">Оформить вручную</button>
+  </div>
+</section>
+
+<section class="page" data-page="receive">
+  <div class="panel">
+    <div class="panel-title">Приёмка</div>
+    <div class="row row-scan"><input id="receive-code" placeholder="Код / модель / SKU"><button id="receive-scan">Скан</button><button id="receive-find">Найти</button></div>
+    <div id="receive-product"></div>
+    <div id="receive-form" class="hidden">
+      <label>Количество<input id="receive-qty" type="number" min="1" value="1"></label>
+      <label>Закупочная цена, ₸<input id="receive-cost" type="number" min="0" step="0.01"></label>
+      <label>Поставщик<input id="receive-supplier" placeholder="Например, Китай"></label>
+      <button class="primary big" id="receive-save">Принять товар</button>
+    </div>
+  </div>
+</section>
+
+<section class="page" data-page="products">
+  <div class="panel products-panel">
+    <div class="panel-title split-title"><span>Товары</span><span class="badge">весь каталог</span></div>
+    <div class="search-box"><input id="product-search" type="search" autocomplete="off" placeholder="Название, модель, SKU или категория"><button id="product-search-btn">Найти</button></div>
+    <div class="list-sub search-hint">Показываются все товары. Категориями можно быстро сузить список.</div>
+    
+    <div class="product-category-strip" id="product-category-strip">
+      <button type="button" class="active" data-product-category="">Все</button>
+      
+    </div>
+    <div id="product-list"></div>
+  </div>
+</section>
+
+<section class="page" data-page="labels">
+  <div class="panel">
+    <div class="panel-title split-title label-page-title"><span>Добавить товары</span><button type="button" id="label-settings-open" class="label-settings-gear" aria-label="Настройки этикеток" title="Настройки этикеток">⚙</button></div>
+    <div class="row row-scan"><input id="label-search" type="search" autocomplete="off" placeholder="Название, модель, SKU"><button id="label-scan">Скан</button><button id="label-search-btn">Найти</button></div>
+    <div id="label-search-results" class="label-results"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title split-title"><span>Очередь печати</span><span id="label-total" class="badge">0 шт.</span></div>
+    <div id="label-queue"></div>
+    <div class="label-actions"><button id="label-clear">Очистить</button><button class="primary" id="label-print-all">Скачать PDF</button></div>
+  </div>
+</section>
+
+<section class="page" data-page="procurement">
+  <div class="cards" id="procurement-cards"></div>
+  <div class="panel procurement-panel">
+    <div class="panel-title split-title"><span>Товары к закупке</span><span id="procurement-count" class="badge">0 поз.</span></div>
+    <div class="list-sub" style="margin-bottom:10px">Список рассчитан по скорости продаж, текущему остатку, сроку поставки и страховому запасу. Учитываются складские товары с указанной себестоимостью. Позиции со статусом «Предзаказ» автоматически исключаются из закупки.</div>
+    <div class="seg procurement-filter">
+      <button data-proc-filter="all" class="active">Все</button>
+      <button data-proc-filter="urgent">Срочно</button>
+    </div>
+    <div id="procurement-list"></div>
+  </div>
+</section>
+
+<section class="page" data-page="analytics">
+  <div class="panel analytics-control-panel compact">
+    <div class="panel-title split-title"><span>Аналитика продаж</span><span id="analytics-period-label" class="badge"></span></div>
+    <div class="analytics-period-grid">
+      <button type="button" data-analytics-range="today">Сегодня</button>
+      <button type="button" data-analytics-range="yesterday">Вчера</button>
+      <button type="button" data-analytics-range="7">7 дней</button>
+      <button type="button" data-analytics-range="30" class="active">30 дней</button>
+      <button type="button" data-analytics-range="90">90 дней</button>
+      <button type="button" data-analytics-range="custom">Период</button>
+    </div>
+    <div id="analytics-custom-range" class="analytics-custom-range hidden">
+      <label>С<input id="analytics-date-from" type="date"></label>
+      <label>По<input id="analytics-date-to" type="date"></label>
+      <button id="analytics-custom-apply" class="primary" type="button">Показать</button>
+    </div>
+    <div class="analytics-source-filter">
+      <span>Источник</span>
+      <div class="seg analytics-source-seg">
+        <button type="button" data-analytics-source="all" class="active">Все</button>
+        <button type="button" data-analytics-source="stock">Склад</button>
+        <button type="button" data-analytics-source="site">Сайт</button>
+      </div>
+    </div>
+  </div>
+  <div class="analytics-summary" id="analytics-cards"></div>
+  <div class="panel analytics-history-panel">
+    <div class="panel-title split-title"><span>История продаж</span><span id="sales-history-count" class="badge">0 шт.</span></div>
+    <div id="sales-history"></div>
+  </div>
+  <details class="panel analytics-fold">
+    <summary><span>Топ товаров по прибыли</span><span>›</span></summary>
+    <div id="top-list"></div>
+  </details>
+  <details class="panel analytics-fold">
+    <summary><span>Стоимость склада по категориям</span><span>›</span></summary>
+    <div class="list-sub fold-note">По себестоимости текущего остатка.</div><div id="inventory-category-list"></div>
+  </details>
+  <details class="panel analytics-fold">
+    <summary><span>Рекомендации закупки</span><span>›</span></summary>
+    <div class="list-sub fold-note">Учитываются продажи склада и подтверждённые заказы сайта.</div><div id="analytics-recs"></div>
+  </details>
+  <details class="panel analytics-fold">
+    <summary><span>Залежавшийся товар — 90+ дней</span><span>›</span></summary>
+    <div id="stale-list"></div>
+  </details>
+</section>
+
+<section class="page" data-page="pos">
+  <div class="cards" id="pos-cards"></div>
+  <div class="panel pos-panel">
+    <div class="panel-title split-title"><span>Kaspi Smart POS</span><button id="pos-refresh" class="panel-link" type="button">Обновить</button></div>
+    <div id="pos-status-box"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Подключение X86 POS Bridge</div>
+    <div class="pos-steps">
+      <div><b>1</b><span>Скачайте Bridge на компьютер в сервисе и распакуйте.</span></div>
+      <div><b>2</b><span>Smart POS и этот компьютер должны быть в одной обычной Wi‑Fi/LAN сети.</span></div>
+      <div><b>3</b><span>Создайте ключ ниже, запустите <code>SETUP.bat</code> и вставьте его.</span></div>
+      <div><b>4</b><span>На Smart POS включите «Защита интеграции» → «Настроить доступ» и подтвердите X86Stock.</span></div>
+    </div>
+    <a class="button-link pos-download" href="downloads/x86-pos-bridge.zip" download>Скачать X86 POS Bridge</a>
+    <button id="pos-create-token" type="button">Создать новый ключ подключения</button>
+    <div id="pos-token-box" class="pos-token-box hidden"><div class="list-sub">Ключ показывается для настройки Bridge. Новый ключ отключит старый Bridge.</div><div class="row"><input id="pos-token" readonly><button id="pos-copy-token" type="button">Копировать</button></div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Как работает оплата</div>
+    <div class="list-sub">В корзине нажмите «Оплатить через Smart POS». Сумма уйдёт на терминал. Товар списывается со склада только после успешного ответа Smart POS. Способ оплаты определяется по фактическому ответу терминала и используется для расчёта комиссии.</div>
+  </div>
+</section>
+
+<section class="page" data-page="ai">
+  <div class="panel ai-panel">
+    <div class="panel-title">X86 AI</div>
+    <div class="ai-control-note"><b>AI может управлять товарами.</b><span>Любое изменение сначала показывается списком. В базу оно попадёт только после вашего подтверждения.</span></div>
+    <textarea id="ai-question" rows="4" placeholder="Например: Клавиатуры Asus с ценой 8000 поднять до 9000"></textarea>
+    <button class="primary big" id="ai-send">Отправить AI</button>
+    <div id="ai-answer" class="ai-answer"></div>
+    <div id="ai-plan" class="ai-plan hidden"></div>
+  </div>
+</section>
+</main>
+
+<nav>
+  <button data-nav="home" class="active"><span>⌂</span>Главная</button>
+  <button data-nav="sale"><span>₸</span>Продажа</button>
+  <button data-nav="receive"><span>＋</span>Приход</button>
+  <button id="cashier-web-scan-nav" class="role-hidden" type="button" aria-label="Сканировать товар в продажу"><span>▣</span>СКАН</button>
+  <button data-nav="products"><span>▤</span>Товары</button>
+  <button data-nav="labels"><span>▦</span>Этикетки</button>
+  <button data-nav="ai"><span>AI</span>GPT</button>
+</nav>
+</div>
+
+<div id="scanner" class="modal hidden">
+  <div class="modal-card scanner-card">
+    <div class="modal-head"><b>Сканер</b><button id="scanner-close">×</button></div>
+    <video id="video" playsinline></video>
+    <div id="scanner-fallback" class="hidden"><p>Автосканер недоступен в этом браузере. Введите код вручную.</p><input id="scanner-manual" placeholder="Код"><button id="scanner-manual-go">Найти</button></div>
+    <div id="scanner-status">Наведите камеру на Code128 / QR / EAN</div>
+  </div>
+</div>
+
+<div id="product-modal" class="modal hidden">
+  <div class="modal-card product-card-modal">
+    <div class="modal-head"><b>Карточка товара</b><button id="product-close">×</button></div>
+    <div id="product-detail"></div>
+  </div>
+</div>
+
+<div id="label-settings-modal" class="modal hidden">
+  <div class="modal-card label-settings-modal-card">
+    <div class="modal-head"><b>Настройки этикеток</b><button id="label-settings-close" type="button">×</button></div>
+    <div class="label-settings-grid">
+      <label>Размер
+        <select id="label-size">
+          <option value="50x30">50 × 30 мм</option>
+          <option value="50x25">50 × 25 мм</option>
+          <option value="40x30">40 × 30 мм</option>
+          <option value="58x40">58 × 40 мм</option>
+          <option value="70x40">70 × 40 мм</option>
+          <option value="custom">Свой размер</option>
+        </select>
+      </label>
+      <label>Текст товара
+        <select id="label-text-mode">
+          <option value="auto">Модель + параметры (авто)</option>
+          <option value="full">Полное название</option>
+          <option value="model">Поле «Модель» ocStore</option>
+        </select>
+      </label>
+      <label>Термопринтер
+        <select id="label-dpi">
+          <option value="203">203 dpi (Xprinter)</option>
+          <option value="300">300 dpi</option>
+        </select>
+      </label>
+    </div>
+    <div id="label-custom-size" class="label-custom-size hidden">
+      <label>Ширина, мм<input id="label-width" type="number" min="25" max="120" step="1" value="50"></label>
+      <label>Высота, мм<input id="label-height" type="number" min="15" max="100" step="1" value="30"></label>
+    </div>
+    <div class="label-setting-note">PDF создаётся сразу с точным выбранным размером: одна этикетка = одна страница PDF, без полей. Для большинства Xprinter выбирайте 203 dpi. В режиме «Полное название» шрифт автоматически уменьшается.</div>
+    <button type="button" id="label-settings-done" class="primary big">Готово</button>
+  </div>
+</div>
+
+
+<div id="pos-payment-modal" class="modal hidden">
+  <div class="modal-card pos-payment-card">
+    <div class="modal-head"><b>Kaspi Smart POS</b><button id="pos-payment-close" type="button">×</button></div>
+    <div class="pos-payment-icon" id="pos-payment-icon">₸</div>
+    <h2 id="pos-payment-title">Отправляю сумму…</h2>
+    <div class="pos-payment-amount" id="pos-payment-amount"></div>
+    <div class="list-sub" id="pos-payment-message">Не закрывайте страницу до результата оплаты.</div>
+    <div id="pos-payment-actions"></div>
+  </div>
+</div>
+
+
+
+
+
+
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "x86-stock-offline-regression",
+  "private": true,
+  "scripts": { "test": "node --test *.test.cjs" },
+  "devDependencies": { "jsdom": "26.1.0" }
+}

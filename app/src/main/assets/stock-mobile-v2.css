@@ -1,0 +1,9 @@
+body.x86-mobile-nav nav button { min-height:48px; touch-action:manipulation; }
+body.x86-mobile-nav nav { padding-bottom:max(6px,env(safe-area-inset-bottom)); }
+body.x86-mobile-nav input,body.x86-mobile-nav select,body.x86-mobile-nav textarea { font-size:16px; }
+.x86-cashier-steps { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
+.x86-cashier-steps button { flex:1; min-height:44px; padding:8px; font-size:12px; }
+.x86-item-menu { position:fixed; z-index:99999; left:12px; right:12px; bottom:max(18px,env(safe-area-inset-bottom)); padding:12px; border-radius:16px; background:#fff; box-shadow:0 8px 40px #0005; display:grid; gap:8px; }
+.x86-item-menu button { min-height:48px; text-align:left; padding:10px; }
+#x86-operation-state:empty { display:none; }
+#x86-operation-state { padding:12px; background:#fff4d6; color:#633c00; font-size:14px; }

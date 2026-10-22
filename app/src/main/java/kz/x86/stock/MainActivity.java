@@ -2,6 +2,34 @@ package kz.x86.stock;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.NotificationChannel;
+import android.app.PendingIntent;
+import kz.x86.stock.ui.StockEventBridge;
+import android.content.SharedPreferences;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceResponse;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Button;
+import android.widget.EditText;
+import kz.x86.stock.download.PendingDownloads;
+import kz.x86.stock.download.LegacyDownloadFiles;
+import kz.x86.stock.download.TrustedDownloadBridge;
+import kz.x86.stock.download.DownloadAdmission;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import kz.x86.stock.security.StockOriginPolicy;
+import kz.x86.stock.download.DownloadPayloadPolicy;
+import kz.x86.stock.ui.RefreshPolicy;
+import kz.x86.stock.ui.ConnectivityUiState;
+import kz.x86.stock.ui.UiFeatureFlags;
 import android.app.DownloadManager;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
@@ -34,6 +62,7 @@ import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
 
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
 
@@ -46,6 +75,7 @@ public class MainActivity extends Activity {
     private static final int REQ_CAMERA = 1001;
     private static final int REQ_FILE = 1002;
     private static final int REQ_STORAGE = 1003;
+    private static final int REQ_NOTIFICATIONS = 1004;
     private static final long EXIT_CONFIRM_MS = 2000L;
 
 
@@ -136,24 +166,29 @@ public class MainActivity extends Activity {
             "try{home.click();return 'navigated';}catch(x){return 'unknown';}" +
             "})()";
 
+    private final ThreadPoolExecutor downloadExecutor = new ThreadPoolExecutor(1, 1, 0L,
+            TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(2));
+    private final DownloadAdmission downloadAdmission = new DownloadAdmission(3);
+    private boolean trustedBridgeActive;
+    private UiFeatureFlags featureFlags;
+    private TextView connectionBadge;
+    private boolean mainFrameFailed;
+    private long pageGeneration;
     private WebView webView;
     private SwipeRefreshLayout swipeRefreshLayout;
     private PermissionRequest pendingPermissionRequest;
     private ValueCallback<Uri[]> fileCallback;
     private String currentUrl = START_URL;
     private long lastBackAt = 0L;
-    private byte[] pendingDownloadBytes;
-    private String pendingDownloadName;
-    private String pendingDownloadMime;
-    private long pendingPdfDownloadId = -1L;
+    private final PendingDownloads pendingDownloads = new PendingDownloads();
+    private boolean storagePermissionInFlight;
 
     private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
             long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
-            if (id == -1L || id != pendingPdfDownloadId) return;
-            pendingPdfDownloadId = -1L;
+            if (!pendingDownloads.consumePdf(id)) return;
             DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
             if (dm == null) return;
             Uri uri = dm.getUriForDownloadedFile(id);
@@ -180,25 +215,38 @@ public class MainActivity extends Activity {
                 SwipeRefreshLayout.LayoutParams.MATCH_PARENT,
                 SwipeRefreshLayout.LayoutParams.MATCH_PARENT
         ));
-        swipeRefreshLayout.setOnRefreshListener(() -> {
-            if (webView != null) {
-                webView.reload();
-            } else {
-                swipeRefreshLayout.setRefreshing(false);
-            }
+        SharedPreferences preferences = getSharedPreferences("x86-ui", MODE_PRIVATE);
+        featureFlags = new UiFeatureFlags(new UiFeatureFlags.Store() {
+            public boolean get(String key) { return preferences.getBoolean(key, false); }
+            public void put(String key, boolean value) { preferences.edit().putBoolean(key, value).apply(); }
         });
+        swipeRefreshLayout.setOnRefreshListener(this::requestSafeRefresh);
         swipeRefreshLayout.setOnChildScrollUpCallback((parent, child) ->
                 webView != null && webView.canScrollVertically(-1)
         );
-        setContentView(swipeRefreshLayout);
-        webView.addJavascriptInterface(new DownloadBridge(), "X86Android");
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        Button settings = new Button(this);
+        settings.setText("Настройки X86 · Классический интерфейс");
+        settings.setContentDescription("Настройки интерфейса X86 Stock");
+        settings.setOnClickListener(v -> showUiSettings());
+        root.addView(settings, new LinearLayout.LayoutParams(-1, -2));
+        connectionBadge = new TextView(this);
+        connectionBadge.setPadding(16, 8, 16, 8);
+        connectionBadge.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        connectionBadge.setVisibility(View.GONE);
+        root.addView(connectionBadge, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(swipeRefreshLayout, new LinearLayout.LayoutParams(-1, 0, 1));
+        setContentView(root);
+        trustedBridgeActive = featureFlags.enabled(UiFeatureFlags.NEW_DOWNLOAD_BRIDGE)
+                && TrustedDownloadBridge.install(webView, (data, name, mime) -> new DownloadBridge().saveBase64(data, name, mime));
+        if (!trustedBridgeActive) webView.addJavascriptInterface(new DownloadBridge(), "X86Android");
+        StockEventBridge.install(webView, this::notifyConfirmedOperation);
+        if (featureFlags.enabled(UiFeatureFlags.NEW_DOWNLOAD_BRIDGE) && !trustedBridgeActive)
+            Toast.makeText(this, "WebView не поддерживает защищённый PDF-мост. Используется совместимый режим", Toast.LENGTH_LONG).show();
 
         IntentFilter downloadFilter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(downloadReceiver, downloadFilter, Context.RECEIVER_EXPORTED);
-        } else {
-            registerReceiver(downloadReceiver, downloadFilter);
-        }
+        ContextCompat.registerReceiver(this, downloadReceiver, downloadFilter, ContextCompat.RECEIVER_EXPORTED);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -229,45 +277,54 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                Uri uri = request.getUrl();
-                String scheme = uri.getScheme();
-                if ("blob".equalsIgnoreCase(scheme) || "data".equalsIgnoreCase(scheme)) {
-                    requestBlobDownload(uri.toString(), "", "");
-                    return true;
-                }
-                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
-                    String host = uri.getHost();
-                    if (host != null && (host.equalsIgnoreCase("x86.kz") || host.endsWith(".x86.kz"))) return false;
-                    return openExternal(uri);
-                }
-                return openExternal(uri);
+                return routeNavigation(view, request.getUrl().toString(), request.isForMainFrame());
             }
 
             @Override
             @SuppressWarnings("deprecation")
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                Uri uri = Uri.parse(url);
-                String scheme = uri.getScheme();
-                if ("blob".equalsIgnoreCase(scheme) || "data".equalsIgnoreCase(scheme)) {
-                    requestBlobDownload(url, "", "");
-                    return true;
+                return routeNavigation(view, url, true);
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                pageGeneration++;
+                mainFrameFailed = false;
+                cancelPendingCamera();
+                if (!StockOriginPolicy.isTrustedStockPage(url)) {
+                    view.removeJavascriptInterface("X86Android");
+                    view.stopLoading();
+                    if (StockOriginPolicy.isExternalSafeScheme(url)) openExternal(Uri.parse(url));
                 }
-                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
-                    String host = uri.getHost();
-                    if (host != null && (host.equalsIgnoreCase("x86.kz") || host.endsWith(".x86.kz"))) return false;
-                    return openExternal(uri);
-                }
-                return openExternal(uri);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (!request.isForMainFrame()) return;
+                mainFrameFailed = true;
+                if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+                showConnection(ConnectivityUiState.fromPageSignal(true, false, false));
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                if (!request.isForMainFrame()) return;
+                mainFrameFailed = true;
+                showConnection(ConnectivityUiState.OFFLINE);
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
+                if (!StockOriginPolicy.isTrustedStockPage(url)) return;
                 currentUrl = url;
+                if (!mainFrameFailed) showConnection(ConnectivityUiState.ONLINE);
                 lastBackAt = 0L;
                 if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
                 installBottomScanButton();
+                if (trustedBridgeActive) webView.evaluateJavascript(assetScript("trusted-download-adapter.js"), null);
                 installDownloadHook();
+                installModuleEnhancements();
             }
 
             @Override
@@ -282,25 +339,25 @@ public class MainActivity extends Activity {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> {
-                    boolean wantsCamera = false;
-                    for (String r : request.getResources()) {
-                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) {
-                            wantsCamera = true;
-                            break;
-                        }
-                    }
-                    if (!wantsCamera) {
+                    if (!StockOriginPolicy.isTrustedStockPage(webView.getUrl()) ||
+                            !StockOriginPolicy.mayGrantVideo(request.getOrigin().toString(), request.getResources())) {
                         request.deny();
                         return;
                     }
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
                             checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                        request.grant(request.getResources());
+                        request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
                     } else {
+                        cancelPendingCamera();
                         pendingPermissionRequest = request;
                         requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
                     }
                 });
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest request) {
+                if (pendingPermissionRequest == request) pendingPermissionRequest = null;
             }
 
             @Override
@@ -324,9 +381,14 @@ public class MainActivity extends Activity {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition,
                                         String mimetype, long contentLength) {
-                String name = URLUtil.guessFileName(url, contentDisposition, mimetype);
+                String name = safeFileName(URLUtil.guessFileName(url, contentDisposition, mimetype), mimetype);
                 if (url != null && (url.startsWith("blob:") || url.startsWith("data:"))) {
                     requestBlobDownload(url, name, mimetype);
+                    return;
+                }
+                if (!StockOriginPolicy.isTrustedStockPage(webView.getUrl()) ||
+                        !StockOriginPolicy.isTrustedStockPage(url)) {
+                    Toast.makeText(MainActivity.this, "Загрузка вне X86 Stock заблокирована", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 try {
@@ -341,9 +403,9 @@ public class MainActivity extends Activity {
                     request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
                     DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
                     long downloadId = dm.enqueue(request);
-                    boolean pdf = (mimetype != null && mimetype.toLowerCase().contains("pdf")) ||
-                            (name != null && name.toLowerCase().endsWith(".pdf"));
-                    if (pdf) pendingPdfDownloadId = downloadId;
+                    boolean pdf = (mimetype != null && mimetype.toLowerCase(Locale.ROOT).contains("pdf")) ||
+                            (name != null && name.toLowerCase(Locale.ROOT).endsWith(".pdf"));
+                    if (pdf) pendingDownloads.trackPdf(downloadId);
                     Toast.makeText(MainActivity.this, pdf ? "PDF скачивается и откроется автоматически" : "Скачивание началось", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     Toast.makeText(MainActivity.this, "Не удалось скачать файл", Toast.LENGTH_LONG).show();
@@ -354,25 +416,25 @@ public class MainActivity extends Activity {
         if (savedInstanceState == null) {
             webView.loadUrl(START_URL);
         } else {
-            webView.restoreState(savedInstanceState);
+            if (webView.restoreState(savedInstanceState) == null) webView.loadUrl(START_URL);
             String restoredUrl = webView.getUrl();
             if (restoredUrl != null && !restoredUrl.isEmpty()) currentUrl = restoredUrl;
         }
     }
 
     private void installBottomScanButton() {
-        if (webView == null) return;
+        if (webView == null || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) return;
         webView.evaluateJavascript(APP_BOTTOM_SCAN_JS, null);
     }
 
 
     private void installDownloadHook() {
-        if (webView == null) return;
+        if (webView == null || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) return;
         webView.evaluateJavascript(DOWNLOAD_HOOK_JS, null);
     }
 
     private void requestBlobDownload(String url, String fileName, String mimeType) {
-        if (webView == null || url == null || url.isEmpty()) return;
+        if (webView == null || url == null || url.isEmpty() || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) return;
         String js = "(function(){try{fetch(" + JSONObject.quote(url) + ").then(function(r){return r.blob();}).then(function(b){" +
                 "var f=new FileReader();f.onloadend=function(){X86Android.saveBase64(f.result," +
                 JSONObject.quote(fileName == null ? "" : fileName) + ",b.type||" +
@@ -382,13 +444,7 @@ public class MainActivity extends Activity {
     }
 
     private String safeFileName(String requested, String mimeType) {
-        String name = requested == null ? "" : requested.trim();
-        name = name.replaceAll("[\\\\/:*?\\\"<>|\\r\\n]+", "_");
-        if (name.isEmpty() || name.equalsIgnoreCase("download") || !name.contains(".")) {
-            if (mimeType != null && mimeType.toLowerCase().contains("pdf")) name = "X86-etiketki.pdf";
-            else name = name.isEmpty() ? "X86-file" : name;
-        }
-        return name;
+        return DownloadPayloadPolicy.sanitizedDownloadName(requested, mimeType);
     }
 
     private void saveDecodedFile(byte[] bytes, String requestedName, String mimeType) {
@@ -417,7 +473,7 @@ public class MainActivity extends Activity {
                 ready.put(MediaStore.Downloads.IS_PENDING, 0);
                 getContentResolver().update(uri, ready, null, null);
                 Toast.makeText(this, "Сохранено: Загрузки/X86/" + name, Toast.LENGTH_SHORT).show();
-                if (type.toLowerCase().contains("pdf") || name.toLowerCase().endsWith(".pdf")) {
+                if (type.toLowerCase(Locale.ROOT).contains("pdf") || name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
                     openSavedFile(uri, "application/pdf");
                 }
             } catch (Exception e) {
@@ -428,10 +484,14 @@ public class MainActivity extends Activity {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
                 checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            pendingDownloadBytes = bytes;
-            pendingDownloadName = name;
-            pendingDownloadMime = type;
-            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_STORAGE);
+            if (!pendingDownloads.enqueue(bytes, name, type)) {
+                Toast.makeText(this, "Очередь загрузок заполнена. Дождитесь сохранения файлов", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (!storagePermissionInFlight) {
+                storagePermissionInFlight = true;
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_STORAGE);
+            }
             return;
         }
         saveLegacyDownload(bytes, name);
@@ -441,13 +501,8 @@ public class MainActivity extends Activity {
     private void saveLegacyDownload(byte[] bytes, String name) {
         try {
             File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Downloads unavailable");
-            File outFile = new File(dir, name);
-            try (FileOutputStream out = new FileOutputStream(outFile)) {
-                out.write(bytes);
-                out.flush();
-            }
-            Toast.makeText(this, "Сохранено: Загрузки/" + name, Toast.LENGTH_LONG).show();
+            File outFile = LegacyDownloadFiles.save(dir, name, bytes);
+            Toast.makeText(this, "Сохранено: Загрузки/" + outFile.getName(), Toast.LENGTH_LONG).show();
         } catch (Exception e) {
             Toast.makeText(this, "Не удалось сохранить файл", Toast.LENGTH_LONG).show();
         }
@@ -456,14 +511,34 @@ public class MainActivity extends Activity {
     private class DownloadBridge {
         @JavascriptInterface
         public void saveBase64(String dataUrl, String fileName, String mimeType) {
-            if (dataUrl == null || dataUrl.isEmpty()) return;
+            if (!DownloadPayloadPolicy.isAcceptedBase64Payload(dataUrl, DownloadPayloadPolicy.MAX_ENCODED_CHARS)) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Формат или размер файла не поддерживается", Toast.LENGTH_LONG).show());
+                return;
+            }
+            DownloadAdmission.Permit permit = downloadAdmission.acquire();
+            if (permit == null) {
+                runOnUiThread(() -> { if (webView != null) Toast.makeText(MainActivity.this, "Дождитесь завершения текущих загрузок", Toast.LENGTH_LONG).show(); });
+                return;
+            }
             try {
-                int comma = dataUrl.indexOf(',');
-                String payload = comma >= 0 ? dataUrl.substring(comma + 1) : dataUrl;
-                byte[] bytes = Base64.decode(payload, Base64.DEFAULT);
-                runOnUiThread(() -> saveDecodedFile(bytes, fileName, mimeType));
-            } catch (Exception e) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка сохранения файла", Toast.LENGTH_LONG).show());
+                downloadExecutor.execute(() -> {
+                    try {
+                        int comma = dataUrl.indexOf(',');
+                        byte[] bytes = Base64.decode(dataUrl.substring(comma + 1), Base64.DEFAULT);
+                        runOnUiThread(() -> {
+                            try {
+                                if (webView != null && StockOriginPolicy.isTrustedStockPage(webView.getUrl()))
+                                    saveDecodedFile(bytes, fileName, DownloadPayloadPolicy.mimeFromDataUrl(dataUrl));
+                            } finally { permit.close(); }
+                        });
+                    } catch (Exception invalid) {
+                        permit.close();
+                        runOnUiThread(() -> { if (webView != null) Toast.makeText(MainActivity.this, "Ошибка сохранения файла", Toast.LENGTH_LONG).show(); });
+                    }
+                });
+            } catch (RejectedExecutionException full) {
+                permit.close();
+                runOnUiThread(() -> { if (webView != null) Toast.makeText(MainActivity.this, "Дождитесь завершения текущих загрузок", Toast.LENGTH_LONG).show(); });
             }
         }
     }
@@ -482,12 +557,204 @@ public class MainActivity extends Activity {
     }
 
     private boolean openExternal(Uri uri) {
+        if (uri == null || !StockOriginPolicy.isExternalSafeScheme(uri.toString())) return true;
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
             return true;
         } catch (Exception e) {
-            return false;
+            Toast.makeText(this, "Нет приложения для этой ссылки", Toast.LENGTH_SHORT).show();
+            return true;
         }
+    }
+
+    private boolean routeNavigation(WebView view, String url, boolean mainFrame) {
+        if (StockOriginPolicy.isTrustedStockPage(url)) return false;
+        if (url != null && (url.startsWith("blob:") || url.startsWith("data:"))) {
+            if (mainFrame && StockOriginPolicy.isTrustedStockPage(view.getUrl())) requestBlobDownload(url, "", "");
+            return true;
+        }
+        if (mainFrame && StockOriginPolicy.isExternalSafeScheme(url)) openExternal(Uri.parse(url));
+        return true;
+    }
+
+    private void cancelPendingCamera() {
+        if (pendingPermissionRequest != null) {
+            pendingPermissionRequest.deny();
+            pendingPermissionRequest = null;
+        }
+    }
+
+    private String assetScript(String name) {
+        try (java.io.InputStream in = getAssets().open(name);
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096]; int read;
+            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        } catch (Exception failure) { return "'unknown'"; }
+    }
+
+    private void requestSafeRefresh() {
+        if (webView == null || fileCallback != null || pendingPermissionRequest != null
+                || !featureFlags.enabled(UiFeatureFlags.SAFE_REFRESH)) {
+            swipeRefreshLayout.setRefreshing(false);
+            Toast.makeText(this, "Обновление недоступно без подтверждения безопасного состояния страницы", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        long generation = pageGeneration;
+        WebView target = webView;
+        String requestedUrl = target.getUrl();
+        // Always stop the spinner even if WebView never invokes the callback.
+        swipeRefreshLayout.postDelayed(() -> {
+            if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+        }, 1500);
+        target.evaluateJavascript(assetScript("refresh-probe.js"), result -> {
+            if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+            if (webView != target || generation != pageGeneration || fileCallback != null
+                    || pendingPermissionRequest != null || !featureFlags.enabled(UiFeatureFlags.SAFE_REFRESH)) return;
+            if (requestedUrl != null && requestedUrl.equals(target.getUrl())
+                    && RefreshPolicy.mayRefresh(StockOriginPolicy.isTrustedStockPage(target.getUrl()),
+                        !target.canScrollVertically(-1), result)) target.reload();
+            else Toast.makeText(this, "Состояние страницы сохранено: обновление отменено", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    private void showConnection(ConnectivityUiState state) {
+        if (connectionBadge == null) return;
+        boolean visible = featureFlags.enabled(UiFeatureFlags.CONNECTION_BADGE) && state != ConnectivityUiState.ONLINE;
+        connectionBadge.setVisibility(visible ? View.VISIBLE : View.GONE);
+        connectionBadge.setText(state == ConnectivityUiState.UNCONFIRMED ? "Статус операции неизвестен. Проверьте результат на сервере."
+                : "Страница недоступна. Проверьте связь и результат операции на сервере; не отправляйте её повторно автоматически.");
+    }
+
+    private void showUiSettings() {
+        String[] labels = {"Классический интерфейс", "Защищённое обновление (тест)",
+                "Индикатор соединения (тест)", "Осторожное закрытие диалогов (тест)",
+                "Фонарик сканера (тест)", "Поиск по открытой странице (тест)",
+                "Защищённый PDF-мост (после перезапуска)", "Навигация модуля 1.9.3 (тест)",
+                "Серверный live-поиск (тест)", "Меню товара по удержанию (тест)",
+                "Жесты: только меню товара (тест)", "Пошаговый кассирский вид (тест)",
+                "Уведомления подтверждённых операций (тест)", "Подтверждение кода сканера (тест)", "Отклик сканера (тест)"};
+        String[] keys = {UiFeatureFlags.CLASSIC_MODE, UiFeatureFlags.SAFE_REFRESH,
+                UiFeatureFlags.CONNECTION_BADGE, UiFeatureFlags.ENHANCED_BACK,
+                UiFeatureFlags.SCANNER_TORCH, UiFeatureFlags.PAGE_SEARCH, UiFeatureFlags.NEW_DOWNLOAD_BRIDGE,
+                UiFeatureFlags.MODULE_NAVIGATION, UiFeatureFlags.MODULE_SEARCH, UiFeatureFlags.ITEM_ACTIONS,
+                UiFeatureFlags.MOBILE_GESTURES, UiFeatureFlags.CASHIER_LAYOUT, UiFeatureFlags.OPERATION_NOTICES, UiFeatureFlags.SCAN_CONFIRM, UiFeatureFlags.SCANNER_FEEDBACK};
+        boolean[] checked = new boolean[keys.length];
+        for (int i = 0; i < keys.length; i++) checked[i] = featureFlags.requested(keys[i]);
+        new AlertDialog.Builder(this).setTitle(trustedBridgeActive ? "Настройки · защищённый PDF-мост" : "Настройки · совместимый PDF-мост")
+                .setMultiChoiceItems(labels, checked, (dialog, which, value) -> {
+                    featureFlags.set(keys[which], value);
+                    if (value && UiFeatureFlags.OPERATION_NOTICES.equals(keys[which]) && Build.VERSION.SDK_INT >= 33
+                            && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+                    installModuleEnhancements();
+                    if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+                    showConnection(mainFrameFailed ? ConnectivityUiState.OFFLINE : ConnectivityUiState.ONLINE);
+                }).setNeutralButton("Найти на странице", (d, w) -> showPageSearch())
+                .setNegativeButton("Фонарик", (d, w) -> toggleScannerTorch())
+                .setPositiveButton("Закрыть", null).show();
+    }
+
+    private void installModuleEnhancements() {
+        if (webView == null || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) return;
+        try {
+            JSONObject options = new JSONObject();
+            options.put("safeRefresh", featureFlags.enabled(UiFeatureFlags.SAFE_REFRESH));
+            options.put("navigation", featureFlags.enabled(UiFeatureFlags.MODULE_NAVIGATION) || featureFlags.enabled(UiFeatureFlags.ENHANCED_BACK));
+            options.put("liveSearch", featureFlags.enabled(UiFeatureFlags.MODULE_SEARCH));
+            options.put("itemActions", featureFlags.enabled(UiFeatureFlags.ITEM_ACTIONS));
+            options.put("gestures", featureFlags.enabled(UiFeatureFlags.MOBILE_GESTURES));
+            options.put("cashier", featureFlags.enabled(UiFeatureFlags.CASHIER_LAYOUT));
+            options.put("scanConfirm", featureFlags.enabled(UiFeatureFlags.SCAN_CONFIRM));
+            options.put("scannerFeedback", featureFlags.enabled(UiFeatureFlags.SCANNER_FEEDBACK));
+            options.put("notifications", featureFlags.enabled(UiFeatureFlags.OPERATION_NOTICES));
+            boolean any = false;
+            java.util.Iterator<String> keys = options.keys();
+            while (keys.hasNext()) any |= options.getBoolean(keys.next());
+            String setup = "(function(){if(!" + any + "&&!window.__x86MobileV2)return false;"
+                    + "window.__x86MobileOptions=" + options + ";var style=document.getElementById('x86-mobile-style');"
+                    + "if(!style){style=document.createElement('style');style.id='x86-mobile-style';document.head.appendChild(style);}"
+                    + "style.textContent=" + JSONObject.quote(assetScript("stock-mobile-v2.css")) + ";return true;})()";
+            long generation = pageGeneration;
+            WebView target = webView;
+            target.evaluateJavascript(setup, result -> {
+                if (webView == target && generation == pageGeneration && StockOriginPolicy.isTrustedStockPage(target.getUrl()) && "true".equals(result)) webView.evaluateJavascript(assetScript("stock-mobile-v2.js"), null);
+            });
+        } catch (Exception ignored) { /* Unknown contracts keep the original site. */ }
+    }
+
+    private void notifyConfirmedOperation(String action, long reference) {
+        if ("scan".equals(action)) {
+            if (featureFlags.enabled(UiFeatureFlags.SCANNER_FEEDBACK) && webView != null)
+                webView.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
+            return;
+        }
+        if (!featureFlags.enabled(UiFeatureFlags.OPERATION_NOTICES) || isFinishing() || isDestroyed()) return;
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        NotificationManager manager = (NotificationManager)getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        manager.createNotificationChannel(new NotificationChannel("x86-confirmed", "Подтверждённые операции X86", NotificationManager.IMPORTANCE_DEFAULT));
+        PendingIntent open = PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP),PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification notice = new Notification.Builder(this,"x86-confirmed")
+                .setSmallIcon(android.R.drawable.stat_notify_more)
+                .setContentTitle("sale".equals(action) ? "Продажа подтверждена сервером" : "Приёмка подтверждена сервером")
+                .setContentText("№ " + reference).setAutoCancel(true).setContentIntent(open).build();
+        try { manager.notify((action + reference).hashCode(),notice); }
+        catch (SecurityException denied) { /* Permission/channel choice never fails the original operation. */ }
+    }
+
+    private void toggleScannerTorch() {
+        if (webView == null || !featureFlags.enabled(UiFeatureFlags.SCANNER_TORCH)
+                || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) {
+            Toast.makeText(this, "Включите тестовый фонарик в настройках интерфейса", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        long generation = pageGeneration;
+        webView.evaluateJavascript(assetScript("scanner-torch.js"), result -> pollTorch(generation, 0));
+    }
+
+    private void pollTorch(long generation, int attempt) {
+        if (webView == null || generation != pageGeneration || !featureFlags.enabled(UiFeatureFlags.SCANNER_TORCH)) return;
+        webView.evaluateJavascript("window.__x86TorchV1 ? window.__x86TorchV1.status : 'unavailable'", result -> {
+            if (webView == null || generation != pageGeneration) return;
+            if ("\"pending\"".equals(result) && attempt < 20) {
+                webView.postDelayed(() -> pollTorch(generation, attempt + 1), 100);
+                return;
+            }
+            String text = "\"on\"".equals(result) ? "Фонарик включён" : "\"off\"".equals(result) ? "Фонарик выключен"
+                    : "Фонарик недоступен. Откройте сканер; камера должна поддерживать фонарик";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    private void showPageSearch() {
+        if (webView == null || !featureFlags.enabled(UiFeatureFlags.PAGE_SEARCH)
+                || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) {
+            Toast.makeText(this, "Включите поиск по странице в настройках интерфейса", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        EditText query = new EditText(this);
+        query.setHint("Текст только на открытой странице");
+        query.setSingleLine(true);
+        query.setSaveEnabled(false);
+        AlertDialog search = new AlertDialog.Builder(this).setTitle("Найти на странице — не поиск по складу")
+                .setView(query).setPositiveButton("Далее", null).setNegativeButton("Назад", null)
+                .setNeutralButton("Закрыть", null).create();
+        String[] lastQuery = {""};
+        search.setOnShowListener(dialog -> {
+            search.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                if (webView == null) return;
+                String text = query.getText().toString();
+                if (!text.equals(lastQuery[0])) { webView.findAllAsync(text); lastQuery[0] = text; }
+                else webView.findNext(true);
+            });
+            search.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+                if (webView != null) webView.findNext(false);
+            });
+        });
+        search.setOnDismissListener(dialog -> { if (webView != null) webView.clearMatches(); });
+        search.show();
     }
 
     private String normalizeUrl(String url) {
@@ -506,6 +773,23 @@ public class MainActivity extends Activity {
             confirmExit();
             return;
         }
+
+        if (featureFlags.enabled(UiFeatureFlags.ENHANCED_BACK)) {
+            webView.evaluateJavascript(assetScript("enhanced-back.js"), result -> {
+                if (webView == null) return;
+                if ("\"closed\"".equals(result)) lastBackAt = 0L;
+                else if ("\"home\"".equals(result)) confirmExit();
+                else if ("\"blocked\"".equals(result))
+                    Toast.makeText(this, "Закройте форму кнопкой на странице, чтобы сохранить изменения", Toast.LENGTH_SHORT).show();
+                else handleLegacyBack();
+            });
+            return;
+        }
+        handleLegacyBack();
+    }
+
+    private void handleLegacyBack() {
+        if (webView == null || !StockOriginPolicy.isTrustedStockPage(webView.getUrl())) return;
 
         // First close an in-page card/dialog. Product cards in X86 Stock do not
         // create browser history, so native Back must close them via the page.
@@ -580,7 +864,10 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_CAMERA && pendingPermissionRequest != null) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                pendingPermissionRequest.grant(pendingPermissionRequest.getResources());
+                if (webView != null && StockOriginPolicy.isTrustedStockPage(webView.getUrl()) &&
+                        StockOriginPolicy.mayGrantVideo(pendingPermissionRequest.getOrigin().toString(), pendingPermissionRequest.getResources()))
+                    pendingPermissionRequest.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+                else pendingPermissionRequest.deny();
             } else {
                 pendingPermissionRequest.deny();
                 Toast.makeText(this, "Камера нужна для сканирования этикеток", Toast.LENGTH_LONG).show();
@@ -588,14 +875,13 @@ public class MainActivity extends Activity {
             pendingPermissionRequest = null;
         }
         if (requestCode == REQ_STORAGE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingDownloadBytes != null) {
-                saveLegacyDownload(pendingDownloadBytes, pendingDownloadName == null ? "X86-file" : pendingDownloadName);
-            } else {
-                Toast.makeText(this, "Нет доступа к папке Загрузки", Toast.LENGTH_LONG).show();
+            storagePermissionInFlight = false;
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            PendingDownloads.FileData file;
+            while ((file = pendingDownloads.poll()) != null) {
+                if (granted) saveLegacyDownload(file.bytes, file.name);
             }
-            pendingDownloadBytes = null;
-            pendingDownloadName = null;
-            pendingDownloadMime = null;
+            if (!granted) Toast.makeText(this, "Нет доступа к папке Загрузки", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -610,6 +896,12 @@ public class MainActivity extends Activity {
     }
     @Override
     protected void onDestroy() {
+        pageGeneration++;
+        cancelPendingCamera();
+        if (fileCallback != null) { fileCallback.onReceiveValue(null); fileCallback = null; }
+        pendingDownloads.clear();
+        downloadAdmission.close();
+        downloadExecutor.shutdownNow();
         try {
             unregisterReceiver(downloadReceiver);
         } catch (Exception ignored) {
@@ -617,6 +909,7 @@ public class MainActivity extends Activity {
         if (webView != null) {
             webView.removeJavascriptInterface("X86Android");
             webView.destroy();
+            webView = null;
         }
         swipeRefreshLayout = null;
         super.onDestroy();

@@ -1,0 +1,16 @@
+{
+  "stock/index.php": "63fd00aa2332e3d53d756bf46b6f41a9175b5bf2c7215e4cc569be4e8857b5a5",
+  "stock/lib.php": "5b6ca588ed4304f14d18b78c730b23baf8dc7a7aaf3229c27abff09f91fbc2a3",
+  "stock/api.php": "db62ff26c84eb55cc6e39cb794ecceb870be54121a282f8130ca7ae39c0a770f",
+  "stock/analytics-api.php": "d6cc2e43d3796bce98aaed60598b24d3806d6838289cf4d1cc04e3412f8f0f23",
+  "stock/sw.js": "1df3a4a99aafbe8c9eda9b7ff266d634ddd671f68602816b48a46b66ce92bae6",
+  "admin/controller/extension/module/x86stock.php": "da316aaf62e90cfcbcbc0775659e44d2867cbe8089c6f4a2706f80ab8a6fc7af",
+  "admin/view/template/extension/module/x86stock.twig": "750e9f4554ce369e81f3fc63643d0eaa8a47280a68f2cd5fb548e93f8150919c",
+  "admin/language/ru-ru/extension/module/x86stock.php": "a1c0083ebf032ecc3a1a35326bb0f42cc411553b8dba19aa71f24e77f10ccc5b",
+  "admin/language/en-gb/extension/module/x86stock.php": "a1c0083ebf032ecc3a1a35326bb0f42cc411553b8dba19aa71f24e77f10ccc5b",
+  "stock/assets/products-plus.js": "7cba831be4ea52f3a17a6f83871572b782bd29f8456fbecd396f2a51d10a116f",
+  "stock/assets/analytics-plus.js": "f275202ff735776d34ee21c64da60fc24bcdab1ba32a644f1124aa1635dd8989",
+  "stock/assets/app.js": "23b937ed5911067af7fa6ce8c3e55d968d5e2da84dd94dde41da63de57750f2a",
+  "stock/assets/app.css": "4f00399fc6eb0770c358ef82811dea819ddf75c0b2e03bf3da8d194afe12cfae",
+  "stock/assets/labels-plus.js": "19d32b3b152b34e6bb7e74f2339a3c6488144dfa6aba3358dc8a8cd589459abd"
+}
