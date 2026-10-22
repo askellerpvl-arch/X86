@@ -9,6 +9,7 @@ android {
     buildFeatures { buildConfig true }
     namespace 'kz.x86.stock'
     compileSdk 35
+    buildToolsVersion "35.0.0"
 
     defaultConfig {
         applicationId 'kz.x86.stock'
@@ -43,6 +44,7 @@ android {
 
 
 dependencies {
+    implementation 'androidx.core:core:1.13.1'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
     testImplementation 'junit:junit:4.13.2'
 }
