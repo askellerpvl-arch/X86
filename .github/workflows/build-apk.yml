@@ -2,14 +2,49 @@ name: Build X86 Stock APK
 
 on:
   workflow_dispatch:
+    inputs:
+      sign_release:
+        description: Build a signed test candidate from this trusted branch
+        type: boolean
+        default: false
   push:
+    branches: [ main, "development/**" ]
+  pull_request:
     branches: [ main ]
 
 permissions:
   contents: read
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Verify APK identity checker
+        run: bash scripts/tests/verify-apk-identity.sh
+      - name: Unit tests, lint and debug APK
+        run: gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
+      - name: Upload development APK and test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: X86-Stock-Development-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: error
+
   build:
+    needs: verify
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.sign_release)
     runs-on: ubuntu-latest
 
     env:
@@ -56,7 +91,9 @@ jobs:
         run: |
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
-          "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          SIGNATURE=$("$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK")
+          printf '%s\n' "$SIGNATURE"
+          printf '%s\n' "$SIGNATURE" | grep -q 'Signer #1 certificate SHA-256 digest: be82abd27b1e50b9537046d4993c3440cc14a41d971bf120c5e96d2c0c46956f' 
 
       - name: Remove signing key
         if: always()

@@ -6,6 +6,7 @@ def releaseKeystorePath = System.getenv("X86_KEYSTORE_PATH")
 def releaseKeystorePassword = System.getenv("X86_KEYSTORE_PASSWORD")
 
 android {
+    buildFeatures { buildConfig true }
     namespace 'kz.x86.stock'
     compileSdk 35
 
@@ -15,6 +16,7 @@ android {
         targetSdk 35
         versionCode 5
         versionName '1.5.0'
+        testInstrumentationRunner 'android.test.InstrumentationTestRunner'
     }
 
     signingConfigs {
@@ -42,4 +44,5 @@ android {
 
 dependencies {
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    testImplementation 'junit:junit:4.13.2'
 }
