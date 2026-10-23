@@ -1,0 +1,45 @@
+name: Build X86 Gallery Cleaner APK
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "gallery-cleaner/**"
+      - ".github/workflows/x86-gallery-cleaner-apk.yml"
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Ensure Android SDK 35
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
+          if [[ ! -d "$ANDROID_HOME/platforms/android-35" || ! -d "$ANDROID_HOME/build-tools/35.0.0" ]]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+            test -n "$SDKMANAGER"
+            "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
+          fi
+      - name: Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Build debug APK
+        working-directory: gallery-cleaner
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: X86-GalleryCleaner-v0.3-debug-apk
+          path: gallery-cleaner/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
