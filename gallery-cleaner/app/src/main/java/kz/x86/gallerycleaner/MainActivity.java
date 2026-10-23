@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends Activity {
-    static final int ASK = 12, TRASH = 13, BATCH = 100;
+    static final int ASK = 12, TRASH = 13, MANAGE = 14, BATCH = 800;
     static final int BLUE = Color.rgb(35,105,225), RED = Color.rgb(193,58,75);
     static final String[] FILTERS = {"Все", "Дубли", "Похожие", "Скриншоты", "WhatsApp", "Техника (ИИ)"};
     final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -67,7 +67,9 @@ public class MainActivity extends Activity {
         @Override protected int sizeOf(Long key, Bitmap value) { return Math.max(1, value.getByteCount()/1024); }
     };
     TextView status, counts;
-    Button selectAllButton;
+    Button selectAllButton, mediaPermissionButton;
+    boolean trashInProgress = false;
+    int trashTotal = 0, trashed = 0;
     LinearLayout tabs;
     GridView grid;
     GalleryAdapter adapter;
@@ -113,7 +115,7 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.rgb(247,249,252));
         setContentView(root);
         TextView title = new TextView(this);
-        title.setText("X86 Галерея 0.1"); title.setTextSize(24);
+        title.setText("X86 Галерея 0.3"); title.setTextSize(24);
         title.setTextColor(Color.rgb(29,43,63)); title.setTypeface(null,1);
         root.addView(title);
         status = new TextView(this);
@@ -137,6 +139,12 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams full = new LinearLayout.LayoutParams(-1,dp(43));
         full.topMargin=dp(6);root.addView(ml,full);
         ml.setOnClickListener(v -> runML());
+        mediaPermissionButton = button("Разрешить удаление без запросов Android", Color.rgb(63,116,139));
+        LinearLayout.LayoutParams mediaParams = new LinearLayout.LayoutParams(-1,dp(42));
+        mediaParams.topMargin = dp(6);
+        root.addView(mediaPermissionButton,mediaParams);
+        mediaPermissionButton.setOnClickListener(v -> openMediaPermissionSettings());
+        refreshMediaPermissionButton();
         LinearLayout bottom = new LinearLayout(this); root.addView(bottom);
         Button clear = button("Снять выделение",Color.rgb(109,122,138));
         bottom.addView(clear,new LinearLayout.LayoutParams(0,dp(44),1));
@@ -405,13 +413,64 @@ public class MainActivity extends Activity {
             selectAllButton.setAlpha(visible.isEmpty()?0.5f:1f);
         }
     }
-    void confirmTrash(){
-        if(busy.get()){toast("Подожди завершения анализа");return;}
-        if(selected.isEmpty()){toast("Выбери ненужные фотографии");return;}
-        new AlertDialog.Builder(this).setTitle("Переместить в корзину?")
-            .setMessage("Выбрано "+selected.size()+" фото. Android запросит подтверждение. За раз до "+BATCH+" шт. Ничего не удаляется без твоего согласия.")
+    boolean canManageMedia(){
+        return Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(this);
+    }
+    void refreshMediaPermissionButton(){
+        if(mediaPermissionButton==null)return;
+        if(Build.VERSION.SDK_INT<31){
+            mediaPermissionButton.setText("Системные подтверждения обязательны на Android 11");
+            mediaPermissionButton.setEnabled(false);
+        }else if(canManageMedia()){
+            mediaPermissionButton.setText("✓ Управление медиа разрешено — без повторных запросов");
+        }else{
+            mediaPermissionButton.setText("Разрешить удаление без запросов Android");
+        }
+    }
+    void openMediaPermissionSettings(){
+        if(Build.VERSION.SDK_INT<31){
+            toast("На этой версии Android нужно подтверждать каждую партию.");
+            return;
+        }
+        if(canManageMedia()){
+            toast("Доступ уже разрешён. После выбора фото нажми «В корзину».");
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Один раз разрешить управление медиа?")
+            .setMessage("В настройках Android включи для X86 Галерея разрешение «Управление медиафайлами». " +
+                "Это позволит переносить выбранные фото в корзину без системного окна на каждую партию. " +
+                "Приложение всё равно спрашивает твоё согласие перед удалением.")
             .setNegativeButton("Отмена",null)
-            .setPositiveButton("Продолжить",(d,w)->requestTrash()).show();
+            .setPositiveButton("Открыть настройки",(d,w)->{
+                try{
+                    startActivityForResult(new Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA),MANAGE);
+                }catch(Exception e){
+                    toast("Не удалось открыть настройки управления медиа");
+                }
+            }).show();
+    }
+    @Override protected void onResume(){
+        super.onResume();
+        refreshMediaPermissionButton();
+    }
+    void confirmTrash(){
+        if(busy.get() || trashInProgress){toast("Дождись окончания текущей операции");return;}
+        if(selected.isEmpty()){toast("Выбери ненужные фотографии");return;}
+        boolean managed = canManageMedia();
+        String msg = "Выбрано "+selected.size()+" фото. ";
+        if(managed) msg += "Ты подтверждаешь один раз здесь; остальные партии приложение перенесёт в корзину автоматически, без системных окон.";
+        else msg += "Без специального разрешения Android может запросить подтверждение на каждую партию до "+BATCH+" фото. Разрешение можно включить выше.";
+        msg += " Фотографии будут в корзине, а не удалены навсегда.";
+        new AlertDialog.Builder(this).setTitle("Переместить в корзину?")
+            .setMessage(msg)
+            .setNegativeButton("Отмена",null)
+            .setPositiveButton("В корзину",(d,w)->{
+                trashInProgress=true;
+                trashTotal=selected.size();
+                trashed=0;
+                requestTrash();
+            }).show();
     }
     void requestTrash(){
         pendingTrash.clear();
@@ -419,24 +478,48 @@ public class MainActivity extends Activity {
         for(Photo p:photos)if(selected.contains(p.id)){
             uris.add(p.uri);pendingTrash.add(p.id);if(uris.size()>=BATCH)break;
         }
-        if(uris.isEmpty())return;
+        if(uris.isEmpty()){
+            trashInProgress=false;
+            status.setText("Перемещено в корзину: "+trashed+" фото.");
+            return;
+        }
+        status.setText("Перенос в корзину: "+trashed+" из "+trashTotal+"...");
         try{
             IntentSender sender=MediaStore.createTrashRequest(getContentResolver(),uris,true).getIntentSender();
             startIntentSenderForResult(sender,TRASH,null,0,0,0);
         }catch(Exception e){
-            pendingTrash.clear();status.setText("Ошибка запроса корзины: "+e.getClass().getSimpleName());
+            pendingTrash.clear();trashInProgress=false;
+            status.setText("Не удалось открыть корзину ("+e.getClass().getSimpleName()+"). Оставшиеся фото не тронуты.");
         }
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
+        if(request==MANAGE){
+            refreshMediaPermissionButton();
+            if(canManageMedia())toast("Готово! Теперь фото можно отправлять в корзину без повторных системных запросов.");
+            return;
+        }
         if(request!=TRASH)return;
         if(result==RESULT_OK){
             HashSet<Long> moved=new HashSet<>(pendingTrash);
+            trashed+=moved.size();
             selected.removeAll(moved);photos.removeIf(p->moved.contains(p.id));
-            applyFilter();status.setText("В корзину перемещено: "+moved.size()+
-                ". Осталось выделено: "+selected.size()+". Следующую партию отправь тем же способом.");
-        }else status.setText("Отменено. Фотографии сохранены.");
-        pendingTrash.clear();
+            pendingTrash.clear();
+            applyFilter();
+            if(!selected.isEmpty()&&canManageMedia()&&trashInProgress){
+                status.setText("Перемещено "+trashed+" из "+trashTotal+". Продолжаю без подтверждений...");
+                ui.postDelayed(this::requestTrash,60);
+            }else{
+                trashInProgress=false;
+                status.setText("Перемещено в корзину: "+trashed+". Осталось выбрано: "+selected.size()+
+                    (selected.isEmpty()?". Готово.":". Можно продолжить после разрешения."));
+            }
+        }else{
+            trashInProgress=false;
+            status.setText("Системное действие отменено. Уже перемещено: "+trashed+
+                ", осталось выбрано: "+selected.size()+".");
+            pendingTrash.clear();
+        }
     }
     @Override public void onBackPressed(){
         if(busy.get())new AlertDialog.Builder(this).setTitle("Остановить анализ?")
