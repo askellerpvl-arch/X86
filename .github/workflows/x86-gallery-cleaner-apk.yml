@@ -39,7 +39,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: X86-GalleryCleaner-v0.2-debug-apk
+          name: X86-GalleryCleaner-v0.3-debug-apk
           path: gallery-cleaner/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
