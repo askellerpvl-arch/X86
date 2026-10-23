@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
         @Override protected int sizeOf(Long key, Bitmap value) { return Math.max(1, value.getByteCount()/1024); }
     };
     TextView status, counts;
+    Button selectAllButton;
     LinearLayout tabs;
     GridView grid;
     GalleryAdapter adapter;
@@ -149,6 +150,11 @@ public class MainActivity extends Activity {
         HorizontalScrollView scroller = new HorizontalScrollView(this);
         scroller.setHorizontalScrollBarEnabled(false);root.addView(scroller);
         tabs = new LinearLayout(this);scroller.addView(tabs);renderTabs();
+        selectAllButton = button("Выбрать все в разделе", BLUE);
+        LinearLayout.LayoutParams selectLayout = new LinearLayout.LayoutParams(-1,dp(45));
+        selectLayout.topMargin=dp(6);
+        root.addView(selectAllButton,selectLayout);
+        selectAllButton.setOnClickListener(v -> toggleSelectAllVisible());
         grid = new GridView(this);grid.setNumColumns(3);
         grid.setHorizontalSpacing(dp(6));grid.setVerticalSpacing(dp(6));
         grid.setPadding(0,dp(7),0,0);grid.setClipToPadding(false);
@@ -375,8 +381,29 @@ public class MainActivity extends Activity {
         updateCount();if(adapter!=null)adapter.notifyDataSetChanged();
         if(grid!=null)grid.setSelection(0);
     }
+    void toggleSelectAllVisible(){
+        if(busy.get()){toast("Подожди завершения анализа");return;}
+        if(visible.isEmpty()){toast("В этом разделе нет фотографий");return;}
+        boolean allSelected = true;
+        for(Photo p:visible)if(!selected.contains(p.id)){allSelected=false;break;}
+        if(allSelected){
+            for(Photo p:visible)selected.remove(p.id);
+        }else{
+            for(Photo p:visible)selected.add(p.id);
+        }
+        updateCount();
+        adapter.notifyDataSetChanged();
+    }
     void updateCount(){
         if(counts!=null)counts.setText("Показано: "+visible.size()+"  •  Выбрано: "+selected.size());
+        if(selectAllButton!=null){
+            boolean allSelected=!visible.isEmpty();
+            for(Photo p:visible)if(!selected.contains(p.id)){allSelected=false;break;}
+            selectAllButton.setText(allSelected?"Снять выбор в этом разделе ("+visible.size()+")":
+                "Выбрать все в разделе ("+visible.size()+")");
+            selectAllButton.setEnabled(!visible.isEmpty()&&!busy.get());
+            selectAllButton.setAlpha(visible.isEmpty()?0.5f:1f);
+        }
     }
     void confirmTrash(){
         if(busy.get()){toast("Подожди завершения анализа");return;}
