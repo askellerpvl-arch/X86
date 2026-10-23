@@ -19,10 +19,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install Android SDK 35
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - name: Ensure Android SDK 35
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
+          if [[ ! -d "$ANDROID_HOME/platforms/android-35" || ! -d "$ANDROID_HOME/build-tools/35.0.0" ]]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+            test -n "$SDKMANAGER"
+            "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
+          fi
       - name: Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
